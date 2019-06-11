@@ -1,0 +1,200 @@
+---
+title: "movielens-harvardx-capstone"
+author: "Thiago do Couto"
+date: "10/06/2019"
+output: html_document
+---
+# MovieLens Capstone - HarvardX EDX
+### This stands for a capstone project for EDX HarvardX Data Science Certification Program.
+
+## 0 - The objective of this project is to predict movie rating.
+We'll use a huge list of movies and its features to predict the movie rating.
+
+## 1 - Load required libraries
+```{r}
+# Load required libraries
+library(tidyverse)
+library(caret)
+```
+
+## 2 - Load pre-processed RDS
+*The standard ML-10M file was freezing RStudio.*
+```{r}
+# Load pre-processed RDS
+edx <- readRDS("edx.rds")
+validation <- readRDS("validation.rds")
+head(edx)
+```
+
+## 3 - Define workspace vars - the "ratings" target and the "genres" correlated variable
+```{r}
+# Define working variables
+rating_var <- edx$rating
+genres_var <- edx$genres
+```
+
+## 4 - Quiz time
+
+### 4.1 - How many rows and columns are there in the EDX dataset?
+```{r}
+# 1 - How many rows and columns are there in the EDX dataset?
+data_observations <- nrow(edx)
+data_observations # 9000055
+```
+
+### 4.2 - How many zeros and three were given in the EDX dataset?
+```{r}
+# 2 - How many zeros and three were given in the EDX dataset?
+sum(edx$rating == 0) # 0
+```
+
+### 4.3 - How many different movies are in the EDX dataset?
+```{r}
+# 3 - How many different movies are in the EDX dataset?
+edx %>% summarize(dif_movies = n_distinct(movieId)) # 10677
+```
+
+### 4.4 - How many different users are in the EDX dataset?
+```{r}
+# 4 - How many different users are in the EDX dataset?
+edx %>% summarize(dif_users = n_distinct(userId)) # 
+```
+
+### 5 - How many movie ratings are in each of the following genres in the EDX dataset?
+```{r}
+# 5 - How many movie ratings are in each of the following genres in the EDX dataset?
+drama_filter <- edx %>% filter(str_detect(genres, "Drama")) %>% nrow()
+comedy_filter <- edx %>% filter(str_detect(genres, "Comedy")) %>% nrow()
+thriller_filter <- edx %>% filter(str_detect(genres, "Thriller")) %>% nrow()
+romance_filter <- edx %>% filter(str_detect(genres, "Romance")) %>% nrow()
+
+print('Drama:')
+drama_filter # 3910127
+print('Comedy:')
+comedy_filter # 3540930
+print('Thriller:')
+thriller_filter # 2325899
+print('Romance:')
+romance_filter # 1712100
+```
+
+### 4.6 - Which movie has the greatest number of ratings?
+```{r}
+# 6 - Which movie has the greatest number of ratings?
+greatest_ratings <- edx %>% group_by(title) %>% summarize(number = n()) %>% arrange(desc(number))
+greatest_ratings[1,1] # Pulp Fiction (1994)
+```
+
+### 4.7 - What are the five most given ratings in order from most to least?
+```{r}
+# 7 - What are the five most given ratings in order from most to least?
+most_given_ratings <- edx %>% group_by(rating) %>% summarize(number = n()) %>% arrange(desc(number))
+head(most_given_ratings$rating, 5) # 4.0 3.0 5.0 3.5 2.0
+```
+
+### 4.8 - True or False: In general, half star ratings are less common than whole star ratings?
+```{r}
+# 8 - True or False: In general, half star ratings are less common than whole star ratings?
+#table(edx$rating)
+half_stars <- edx %>% filter(str_detect(rating, ".5")) %>% nrow()
+whole_stars <- data_observations - half_stars
+print(half_stars < whole_stars) # True
+```
+
+## 5 - RMSE - Evaluating the model
+
+5.1 - Now we will look forward the Root Mean Squared Error.
+```{r}
+# RMSE
+RMSE <- function(actual, predicted){
+  sqrt(mean((actual - predicted)^2))
+}
+```
+
+5.2 - Setting the Lambda range to test through the loop function.
+```{r}
+lambdas <- seq(0, 5, 0.25)
+```
+
+5.3 - RMSEs loop function to test the optimal Lambda value.
+```{r}
+rmses <- sapply(lambdas, function(l) {
+  
+  # Assess the Mu average from the training set ratings 
+  mu <- mean(edx$rating)
+  
+  # Assess the average by movie only - penalize movies with few ratings
+  moa_balance <- edx %>% 
+    group_by(movieId) %>%
+    summarize(moa_balance = sum(rating - mu) / (n()+l))
+  
+  # Assess the average by movie and user - penalize movies with few ratings
+  mua_balance <- edx %>% 
+    left_join(moa_balance, by = "movieId") %>%
+    group_by(userId) %>%
+    summarize(mua_balance = sum(rating - moa_balance - mu) / (n()+l))
+  predicted_ratings <- edx %>% 
+    left_join(moa_balance, by = "movieId") %>%
+    left_join(mua_balance, by = "userId") %>%
+    mutate(col_pred = mu + moa_balance + mua_balance) %>%
+    .$col_pred
+  
+  return(RMSE(predicted_ratings, edx$rating))
+})
+```
+
+5.4 - Now that we have tested and store the Lambdas RMSEs, we'll plot RMSE against the Lambda value to see the lowest value.
+```{r}
+plot(lambdas, rmses)
+```
+
+We see that the optimal Lambda stands between 0 and 1, something about 0.5.
+
+5.5 - Let's see if we deduced right:
+```{r}
+min_lambda <- lambdas[which.min(rmses)]
+
+print('Minimal RMSE:')
+min(rmses)
+print('Minimal Lambda:')
+min_lambda
+```
+
+As expected, the optimal Lambda value that stands for the lowest RMSE is 0.5.
+
+5.6 - Now we'll run the prediction function using the optimal Lambda value.
+```{r}
+y_hat <- sapply(min_lambda, function(l) {
+  
+  # Assess the Mu average from the training set ratings 
+  mu <- mean(edx$rating)
+  
+  # Adequate Movie Only Average to min Lambda
+  moa_balance <- edx %>% 
+    group_by(movieId) %>%
+    summarize(moa_balance = sum(rating - mu) / (n()+l))
+  
+  # Adequate Movie and User Average to min Lambda
+  mua_balance <- edx %>% 
+    left_join(moa_balance, by = "movieId") %>%
+    group_by(userId) %>%
+    summarize(mua_balance = sum(rating - moa_balance - mu) / (n()+l))
+  
+  # Assess the prediction over the validation set
+  predicted_ratings <- 
+    validation %>% 
+    left_join(moa_balance, by = "movieId") %>%
+    left_join(mua_balance, by = "userId") %>%
+    mutate(col_pred = mu + moa_balance + mua_balance) %>%
+    .$col_pred
+    return(predicted_ratings)
+})
+```
+
+Fine!
+
+## 6 - Save file to CSV
+```{r}
+# Save file to CSV
+write.csv(validation %>% select(userId, movieId) %>% mutate(rating = y_hat), "submission.csv", na = "", row.names = FALSE)
+```
